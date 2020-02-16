@@ -1,0 +1,172 @@
+---
+title: "Practical Machine Learning Assignment"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+The objective of this exercise is to predict the manner in which six participants
+performed some exercises. The dataset contains data from accelerometers on the
+belt, forearm, arm, and dumbbell of the six participants. They were asked to perform 
+barbell lifts correctly and incorrectly in five different ways.
+
+Six young health participants were asked to perform one set of 10 repetitions of 
+the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according 
+to the specification (Class A), throwing the elbows to the front (Class B), lifting 
+the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) 
+and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 
+4 classes correspond to common mistakes. Participants were supervised by an experienced 
+weight lifter to make sure the execution complied to the manner they were supposed 
+to simulate. The exercises were performed by six male participants aged between 20-28 years, 
+with little weight lifting experience. We made sure that all participants could easily 
+simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+# Loading the Data
+```{r data,echo=TRUE}
+# load url for datasets
+UrlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+UrlTest <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(UrlTrain))
+testing <- read.csv(url(UrlTest))
+```
+
+# Loading Required Packages and Preparing the Data
+```{r setup,echo=TRUE}
+# load packages
+library(caret)
+library(corrplot)
+library(dplyr)
+library(gbm)
+library(knitr)
+library(randomForest)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+
+# create data partition
+set.seed(11111)
+inTrain <- createDataPartition(training$classe, p=0.7, list=FALSE)
+TrainSet <- training[inTrain,]
+TestSet <- training[-inTrain,]
+dim(TrainSet)
+dim(TestSet)
+```
+
+# Data Cleaning
+```{r clean,echo=TRUE}
+# remove 'near zero variance' variables (columns)
+nzv <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[,-nzv]
+TestSet <- TestSet[,-nzv]
+dim(TrainSet)
+dim(TestSet)
+
+# remove variables (columns) with majority 'NA' data
+mostNA <- sapply(TrainSet, function(x) mean(is.na(x))) > 0.95
+TrainSet <- TrainSet[,mostNA==FALSE]
+TestSet <- TestSet[,mostNA==FALSE]
+dim(TrainSet)
+dim(TestSet)
+
+# remove identifiers
+TrainSet <- TrainSet[,-(1:5)]
+TestSet <- TestSet[,-(1:5)]
+dim(TrainSet)
+dim(TestSet)
+```
+
+# Exploratory Data Analysis - Correlational Matrix
+```{r corr,echo=TRUE}
+corMatrix <- cor(TrainSet[,-54])
+corrplot(corMatrix, order = "FPC", method = "square", type = "lower", 
+         tl.cex = 0.7, tl.col = "black", tl.pos = "ld")
+```
+From the correlation matrix, we can see the highly correlated variables as the
+darker colours.
+
+# Prediction Model Building
+We will attempt a total of three prediction models and select the one with highest
+accuracy value for the quiz predictions. The three models selected are:
+1. Random Forests
+2. Decision Tree
+3. Generalised Boosted Model
+
+## 1. Random Forest
+```{r rf,echo=TRUE}
+set.seed(11111)
+RFcontrol <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+RFmodel <- train(classe ~ ., data = TrainSet, method = "rf", trControl = RFcontrol)
+RFmodel$finalModel
+
+# predict on test set
+RFpredict <- predict(RFmodel, newdata = TestSet)
+RFmatrix <- confusionMatrix(RFpredict, TestSet$classe)
+RFmatrix
+
+# plot results
+plot(RFmatrix$table, col = RFmatrix$byClass, 
+     main = paste("Random Forest - Accuracy =",                                     
+                  round(RFmatrix$overall['Accuracy'], 4)))
+```
+
+## 2. Decision Tree
+```{r tree,echo=TRUE}
+set.seed(11111)
+DTmodel <- rpart(classe ~ ., data = TrainSet, method = "class")
+fancyRpartPlot(DTmodel)
+
+# predict on test set
+DTpredict <- predict(DTmodel, newdata = TestSet, type = "class")
+DTmatrix <- confusionMatrix(DTpredict, TestSet$classe)
+DTmatrix
+
+# plot results
+plot(DTmatrix$table, col = DTmatrix$byClass, 
+     main = paste("Decision Tree - Accuracy =",                                     
+                  round(DTmatrix$overall['Accuracy'], 4)))
+```
+
+## 3. Generalised Boosted Model
+```{r gbm,echo=TRUE}
+set.seed(11111)
+GBcontrol <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+GBmodel <- train(classe ~ ., data = TrainSet, method = "gbm", 
+                 trControl = GBcontrol, verbose = FALSE)
+GBmodel$finalModel
+
+# predict on test set
+GBpredict <- predict(GBmodel, newdata = TestSet)
+GBmatrix <- confusionMatrix(GBpredict, TestSet$classe)
+GBmatrix
+
+# plot results
+plot(GBmatrix$table, col = GBmatrix$byClass, 
+     main = paste("GBM - Accuracy =",                                     
+                  round(GBmatrix$overall['Accuracy'], 4)))
+```
+
+# Applying Selected Model to Predict the 20 Test Cases
+In summary, the accuracy of our three models selected are as follows:
+1. Random Forest = 0.9983
+2. Decision Tree = 0.7506
+3. Generalised Boosted Model = 0.9876
+
+Since the Random Forest model gave the highest accuracy value, we will use it
+to apply to the 20 test cases.
+```{r test,echo=TRUE}
+TESTpredict <- predict(RFmodel, newdata = testing)
+TESTpredict
+
+# add prediction to dataframe
+NEWtesting <- testing %>% mutate(predicted_classe = TESTpredict)
+```
+
+## Acknowledgements
+The dataset was generously provided from the following source:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. 
+“Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th 
+International Conference in Cooperation with SIGCHI (Augmented Human ’13)”. 
+Stuttgart, Germany: ACM SIGCHI, 2013.
